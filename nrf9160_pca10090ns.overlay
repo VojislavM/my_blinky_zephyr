@@ -1,0 +1,14 @@
+&uart1 {
+	status = "okay";
+	current-speed = <115200>;
+	tx-pin = <13>;
+	rx-pin = <25>;
+};
+
+&i2c3 {
+	status = "okay";
+	compatible = "nordic,nrf-twim";
+	sda-pin = < 11 >;
+	scl-pin = < 12 >;
+    clock-frequency = <I2C_BITRATE_STANDARD>;  
+};
