@@ -8,3 +8,6 @@ target_sources(app PRIVATE src/main.c)
 
 # Include source directory
 zephyr_include_directories(src)
+
+# Application directories
+add_subdirectory(src/accel)

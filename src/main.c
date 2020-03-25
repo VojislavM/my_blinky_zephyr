@@ -15,6 +15,8 @@
 #include <math.h>
 #include <drivers/gpio.h>
 #include <sys/printk.h>
+#include <drivers/sensor.h>
+#include <sys/util.h>
 
 #define LED_PORT	DT_ALIAS_LED0_GPIOS_CONTROLLER
 #define LED		DT_ALIAS_LED0_GPIOS_PIN
@@ -22,19 +24,55 @@
 /* 1000 msec = 1 sec */
 #define SLEEP_TIME_MS	1000
 
-#ifdef CONFIG_SOC_NRF9160
-#define I2C_DEV "I2C_3"
-#else
-#define I2C_DEV "I2C_1"
-#endif
+// #ifdef CONFIG_SOC_NRF9160
+ #define I2C_DEV "I2C_2"
+// #else
+// #define I2C_DEV "I2C_1"
+// #endif
 
 struct device * i2c_dev;
 struct device * dev_led;
-uint8_t WhoAmI = 0u;
+// uint8_t WhoAmI = 0u;
 
+static void process_sample(struct device *dev)
+{
+	static unsigned int obs;
+	struct sensor_value temp, hum;
+	if (sensor_sample_fetch(dev) < 0) {
+		printf("Sensor sample update error\n");
+		return;
+	}
+
+	if (sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &temp) < 0) {
+		printf("Cannot read HTS221 temperature channel\n");
+		return;
+	}
+
+	if (sensor_channel_get(dev, SENSOR_CHAN_HUMIDITY, &hum) < 0) {
+		printf("Cannot read HTS221 humidity channel\n");
+		return;
+	}
+
+	++obs;
+	printf("Observation:%u\n", obs);
+
+	/* display temperature */
+	printf("Temperature:%.1f C\n", sensor_value_to_double(&temp));
+
+	/* display humidity */
+	printf("Relative Humidity:%.1f%%\n",
+	       sensor_value_to_double(&hum));
+}
+
+static void hts221_handler(struct device *dev,
+			   struct sensor_trigger *trig)
+{
+	process_sample(dev);
+}
 
 void main(void)
 {
+
 	u32_t cnt = 0;
 	uint8_t error = 0u;
 
@@ -81,12 +119,63 @@ void main(void)
 		
 	}
 
-	/*blink led in loop*/
-	while (1) {
-		/* Set pin to HIGH/LOW every 1 second */
-		gpio_pin_write(dev_led, LED, cnt % 2);
-		cnt++;
-		k_sleep(SLEEP_TIME_MS);
-		printk("Hello World! %s\n", CONFIG_BOARD);
+	struct device *dev = device_get_binding("HTS221");
+
+	if (dev == NULL) {
+		printf("Could not get HTS221 device\n");
+		return;
 	}
+
+	if (IS_ENABLED(CONFIG_HTS221_TRIGGER)) {
+		struct sensor_trigger trig = {
+			.type = SENSOR_TRIG_DATA_READY,
+			.chan = SENSOR_CHAN_ALL,
+		};
+		if (sensor_trigger_set(dev, &trig, hts221_handler) < 0) {
+			printf("Cannot configure trigger\n");
+			return;
+		};
+	}
+
+	while (!IS_ENABLED(CONFIG_HTS221_TRIGGER)) {
+		process_sample(dev);
+		k_sleep(K_MSEC(2000));
+	}
+	k_sleep(K_FOREVER);
+
+	// if (!init_accelerometer()) {
+	// return -1;
+	// }
+
+	// while (1) {
+	// 	printk("\033[1;1H");
+	// 	printk("\033[2J");
+
+	// 	double x_accel = 0;
+	// 	double y_accel = 0;
+	// 	double z_accel = 0;
+	// 	get_accelerometer_data(&x_accel, &y_accel, &z_accel);
+
+	// 	printk("Acceleration values:\n");
+	// 	printk("------------------------------------------------------------------------------------------------------\n");
+	// 	printf("X acceleration: %lf (m/s^2), Y acceleration: %lf (m/s^2), Z acceleration: %lf (m/s^2)\n", x_accel, y_accel, z_accel);
+	// 	printk("------------------------------------------------------------------------------------------------------");
+
+	// 	k_sleep(K_MSEC(500));
+	// }
+
+
+	// return 0;
+
+	/*******************************************/
+	
+
+	// /*blink led in loop*/
+	// while (1) {
+	// 	/* Set pin to HIGH/LOW every 1 second */
+	// 	gpio_pin_write(dev_led, LED, cnt % 2);
+	// 	cnt++;
+	// 	k_sleep(SLEEP_TIME_MS);
+	// 	printk("Hello World! %s\n", CONFIG_BOARD);
+	// }
 }
