@@ -5,10 +5,26 @@
 	rx-pin = <25>;
 };
 
-&i2c3 {
+&led0 {
+	gpios = <&gpio0 4 GPIO_INT_ACTIVE_HIGH>;
+	label = "Green LED 0";
+};
+
+&i2c2 {
 	status = "okay";
 	compatible = "nordic,nrf-twim";
 	sda-pin = < 11 >;
 	scl-pin = < 12 >;
-    clock-frequency = <I2C_BITRATE_STANDARD>;  
+    clock-frequency = <I2C_BITRATE_STANDARD>;
+
+	lis2dw12-accel@19 {
+			compatible = "st,lis2dw12";
+			label = "LIS2DW12-ACCEL";
+			reg = <0x19>;
+	};
+	hts221@5f {
+		compatible = "st,hts221";
+		reg = <0x5f>;
+		label = "HTS221";
+	};
 };
