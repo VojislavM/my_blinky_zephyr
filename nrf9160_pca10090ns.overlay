@@ -5,6 +5,11 @@
 	rx-pin = <25>;
 };
 
+&led0 {
+	gpios = <&gpio0 4 GPIO_INT_ACTIVE_HIGH>;
+	label = "Green LED 0";
+};
+
 &i2c2 {
 	status = "okay";
 	compatible = "nordic,nrf-twim";

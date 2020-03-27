@@ -39,28 +39,28 @@ static void process_sample(struct device *dev)
 	static unsigned int obs;
 	struct sensor_value temp, hum;
 	if (sensor_sample_fetch(dev) < 0) {
-		printf("Sensor sample update error\n");
+		printk("Sensor sample update error\n");
 		return;
 	}
 
 	if (sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &temp) < 0) {
-		printf("Cannot read HTS221 temperature channel\n");
+		printk("Cannot read HTS221 temperature channel\n");
 		return;
 	}
 
 	if (sensor_channel_get(dev, SENSOR_CHAN_HUMIDITY, &hum) < 0) {
-		printf("Cannot read HTS221 humidity channel\n");
+		printk("Cannot read HTS221 humidity channel\n");
 		return;
 	}
 
 	++obs;
-	printf("Observation:%u\n", obs);
+	printk("Observation:%u\n", obs);
 
 	/* display temperature */
-	printf("Temperature:%.1f C\n", sensor_value_to_double(&temp));
+	printk("Temperature:%.1f C\n", sensor_value_to_double(&temp));
 
 	/* display humidity */
-	printf("Relative Humidity:%.1f%%\n",
+	printk("Relative Humidity:%.1f%%\n",
 	       sensor_value_to_double(&hum));
 }
 
@@ -70,13 +70,35 @@ static void hts221_handler(struct device *dev,
 	process_sample(dev);
 }
 
+
+
 void main(void)
 {
 
 	u32_t cnt = 0;
 	uint8_t error = 0u;
+	
+	/*start and configure led pin*/
+	dev_led = device_get_binding(LED_PORT);
+	/* Set LED pin as output */
+	gpio_pin_configure(dev_led, LED, GPIO_DIR_OUT);
 
 	k_sleep(500);
+	
+	
+/************************************TEST1************************************/
+/******************************LED and UART test******************************/
+	/*blink led in loop*/
+	while (1) {
+	 	/* Set pin to HIGH/LOW every 1 second */
+	 	gpio_pin_write(dev_led, LED, cnt % 2);
+	 	cnt++;
+	 	k_sleep(SLEEP_TIME_MS);
+	 	printk("Hello World! %s\n", CONFIG_BOARD);
+	}
+/*****************************************************************************/
+/*****************************************************************************/
+
 
 	printk("Starting i2c scanner...\n");
 
@@ -92,11 +114,6 @@ void main(void)
 	printk("Value of NRF_TWIM3_NS->PSEL.SDA: %ld \n",NRF_TWIM3_NS->PSEL.SDA);
 	printk("Value of NRF_TWIM3_NS->FREQUENCY: %ld \n",NRF_TWIM3_NS->FREQUENCY);
 	printk("26738688 -> 100k\n");
-
-	/*start and configure led pin*/
-	dev_led = device_get_binding(LED_PORT);
-	/* Set LED pin as output */
-	gpio_pin_configure(dev_led, LED, GPIO_DIR_OUT);
 
 	/*search for i2c devices*/
 	for (u8_t i = 4; i <= 0x77; i++) {
@@ -122,7 +139,7 @@ void main(void)
 	struct device *dev = device_get_binding("HTS221");
 
 	if (dev == NULL) {
-		printf("Could not get HTS221 device\n");
+		printk("Could not get HTS221 device\n");
 		return;
 	}
 
@@ -132,7 +149,7 @@ void main(void)
 			.chan = SENSOR_CHAN_ALL,
 		};
 		if (sensor_trigger_set(dev, &trig, hts221_handler) < 0) {
-			printf("Cannot configure trigger\n");
+			printk("Cannot configure trigger\n");
 			return;
 		};
 	}
