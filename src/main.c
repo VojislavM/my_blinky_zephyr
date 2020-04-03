@@ -9,191 +9,87 @@
 #include <stdio.h>
 #include <zephyr.h>
 #include <device.h>
-//#include <i2c.h>
+#include <i2c.h>
 #include <gpio.h>
-//#include <string.h>
-//#include <stdlib.h>
-//#include <math.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
 #include <drivers/sensor.h>
 #include <drivers/gpio.h>
-//#include <sys/printk.h>
-//#include "accelerometer.h"
+#include <sys/printk.h>
 
-//#include <sys/util.h>
+#include <sys/util.h>
+
+#include "lis2dw12_reg.h"
 
 #define LED_PORT	DT_ALIAS_LED0_GPIOS_CONTROLLER
 #define LED		DT_ALIAS_LED0_GPIOS_PIN
+#define ACCEL_DEV_ADDR 0x19
+#define LIS2DW12_DRDY_AI_BIT                 (0x01 << 0)
+//#define LIS2DW12_WHO_AM_I                    (0x0FU)
+#define LIS2DW12_CTRL7                       (0x3FU)
 
 /* 1000 msec = 1 sec */
 #define SLEEP_TIME_MS	1000
 
 // #ifdef CONFIG_SOC_NRF9160
-// #define I2C_DEV "I2C_2"
+#define I2C_DEV "I2C_2"
 // #else
 // #define I2C_DEV "I2C_1"
 // #endif
 
-//struct device * i2c_dev;
+struct accel_data {
+    float x_axis;
+    float y_axis;
+    float z_axis;
+};
+
+struct device * i2c_dev;
 struct device * dev_led;
-// uint8_t WhoAmI = 0u;
+uint8_t WhoAmI = 0u;
 
-// static void process_sample(struct device *dev)
-// {
-// 	static unsigned int obs;
-// 	struct sensor_value temp, hum;
-// 	if (sensor_sample_fetch(dev) < 0) {
-// 		printk("Sensor sample update error\n");
-// 		return;
-// 	}
+uint8_t read_reg(uint8_t reg);
+void write_reg(uint8_t reg, uint8_t val);
+bool accel_whoami(void);
+uint8_t read_temp(void);
+struct accel_data read_accel_values(void);
+int16_t twos_comp_to_signed_int(uint16_t x);
+float raw_to_mg_2g_range(int16_t x);
+void single_read_setup(void);
+void wake_up_free_fall_setup(uint8_t wake_up_thr, uint8_t wake_up_dur,uint8_t free_fall);
 
-// 	if (sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &temp) < 0) {
-// 		printk("Cannot read HTS221 temperature channel\n");
-// 		return;
-// 	}
-
-// 	if (sensor_channel_get(dev, SENSOR_CHAN_HUMIDITY, &hum) < 0) {
-// 		printk("Cannot read HTS221 humidity channel\n");
-// 		return;
-// 	}
-
-// 	++obs;
-// 	printk("Observation:%u\n", obs);
-
-// 	/* display temperature */
-// 	printk("Temperature:%.1f C\n", sensor_value_to_double(&temp));
-
-// 	/* display humidity */
-// 	printk("Relative Humidity:%.1f%%\n",
-// 	       sensor_value_to_double(&hum));
-// }
-
-// static void hts221_handler(struct device *dev,
-// 			   struct sensor_trigger *trig)
-// {
-// 	process_sample(dev);
-// }
-
-#ifdef CONFIG_LIS2DW12_TRIGGER
-static int lis2dw12_trig_cnt;
-
-static void lis2dw12_trigger_handler(struct device *dev,
-				    struct sensor_trigger *trig)
-{
-	sensor_sample_fetch_chan(dev, SENSOR_CHAN_ACCEL_XYZ);
-	lis2dw12_trig_cnt++;
-}
-#endif
-
-static void lis2dw12_config(struct device *lis2dw12)
-{
-	struct sensor_value odr_attr, fs_attr;
-
-	/* set LIS2DW12 accel/gyro sampling frequency to 100 Hz */
-	odr_attr.val1 = 100;
-	odr_attr.val2 = 0;
-
-	if (sensor_attr_set(lis2dw12, SENSOR_CHAN_ACCEL_XYZ,
-			    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
-		printk("Cannot set sampling frequency for LIS2DW12 accel\n");
-		return;
-	}
-
-	sensor_g_to_ms2(16, &fs_attr);
-
-	if (sensor_attr_set(lis2dw12, SENSOR_CHAN_ACCEL_XYZ,
-			    SENSOR_ATTR_FULL_SCALE, &fs_attr) < 0) {
-		printk("Cannot set sampling frequency for LIS2DW12 gyro\n");
-		return;
-	}
-
-#ifdef CONFIG_LIS2DW12_TRIGGER
-	struct sensor_trigger trig;
-
-	trig.type = SENSOR_TRIG_DATA_READY;
-	trig.chan = SENSOR_CHAN_ACCEL_XYZ;
-	sensor_trigger_set(lis2dw12, &trig, lis2dw12_trigger_handler);
-#endif
-}
-
-static void fetch_and_display(struct device *sensor)
-{
-	static unsigned int count;
-	struct sensor_value accel_x, accel_y, accel_z;
-	const char *overrun = "";
-	int rc = sensor_sample_fetch(sensor);
-	//int rc = sensor_sample_fetch(sensor);
-
-	++count;
-	if (rc == -EBADMSG) {
-		/* Sample overrun.  Ignore in polled mode. */
-		if (IS_ENABLED(CONFIG_LIS2DW12_TRIGGER)) {
-			overrun = "[OVERRUN] ";
-		}
-		rc = 0;
-	}
-	if (rc == 0) {
-		//printk("sensor_channel_get");
-		rc = sensor_channel_get(sensor, SENSOR_CHAN_ACCEL_X, &accel_x);
-		rc = sensor_channel_get(sensor, SENSOR_CHAN_ACCEL_Y, &accel_y);
-		rc = sensor_channel_get(sensor, SENSOR_CHAN_ACCEL_Z, &accel_z);
-	}
-	if (rc < 0) {
-		printf("ERROR: Update failed: %d\n", rc);
-	} else {
-		printf("#%u @ %u ms: %sx %f , y %f , z %f\n",
-		       count, k_uptime_get_32(), overrun,
-		       sensor_value_to_double(&accel_x),
-		       sensor_value_to_double(&accel_y),
-		       sensor_value_to_double(&accel_z));
-	}
+uint8_t i2c_init(){
+    i2c_dev = device_get_binding(I2C_DEV);
+    if (!i2c_dev) {
+		printk("I2C_2 error\n");
+        return -1;
+	} 
+	else{
+		//i2c_configure(i2c_dev, I2C_SPEED_SET(I2C_SPEED_STANDARD));
+		printk("I2C_2 Init OK\n");
+        return 0;
+    }
 }
 
 void main(void)
 {
-
-	struct device *lis2dw12 = device_get_binding(DT_INST_0_ST_LIS2DW12_LABEL);
-
-	if (!lis2dw12) {
-		printf("Could not get LIS2DW12 device\n");
-		return;
-	}
-
-	lis2dw12_config(lis2dw12);
-	// u32_t cnt = 0;
-	// uint8_t error = 0u;
-
-	// int ret;
-	// struct sensor_value temp_value;
-	// struct sensor_value odr_attr;
+	uint8_t error = 0u;
 	
-	// /*start and configure led pin*/
-	// dev_led = device_get_binding(LED_PORT);
-	// /* Set LED pin as output */
-	// gpio_pin_configure(dev_led, LED, GPIO_DIR_OUT);
+	/*start and configure led pin*/
+	dev_led = device_get_binding(LED_PORT);
+	/* Set LED pin as output */
+	gpio_pin_configure(dev_led, LED, GPIO_DIR_OUT);
 
-	// k_sleep(500);
+	/*
+	*  Initialize mems driver interface
+	*/
+	// stmdev_ctx_t dev_ctx;
+	// lis2dw12_reg_t int_route;
+	// dev_ctx.write_reg = platform_write;
+	// dev_ctx.read_reg = platform_read;
+	// dev_ctx.handle = i2c_dev;
 
-	// struct device *sensor = device_get_binding("LIS2DW12-ACCEL");
-	// if (sensor == NULL) {
-	// 	printf("Could not get %s device\n",
-	// 	       "LIS2DH12-ACCEL");
-	// 	return;
-	// }
-
-	// /* set accel/gyro sampling frequency to 104 Hz */
-	// odr_attr.val1 = 104;
-	// odr_attr.val2 = 0;
-
-	// if (sensor_attr_set(sensor, SENSOR_CHAN_ACCEL_XYZ,
-	// 		    SENSOR_ATTR_SAMPLING_FREQUENCY, &odr_attr) < 0) {
-	// 	printk("Cannot set sampling frequency for accelerometer.\n");
-	// 	return;
-	// }
-
-	// while (true) {
-	// 	fetch_and_display(sensor);
-	// 	k_sleep(K_MSEC(2000));
-	// }
+	k_sleep(500); 
 	
 /************************************TEST1************************************/
 /******************************LED and UART test******************************/
@@ -208,104 +104,309 @@ void main(void)
 /*****************************************************************************/
 /*****************************************************************************/
 
+
 /************************************TEST2************************************/
 /**********************************I2C SCAN***********************************/
-	// printk("Starting i2c scanner...\n");
+	printk("Starting i2c scanner...\n");
 
-	// /*start and configure i2c*/
-	// i2c_dev = device_get_binding(I2C_DEV);
-	// if (!i2c_dev) 
-	// {
-	// 	printk("I2C: Device driver not found.\n");
-	// 	return;
-	// }
-	// i2c_configure(i2c_dev, I2C_SPEED_SET(I2C_SPEED_STANDARD));
-	// printk("Value of NRF_TWIM3_NS->PSEL.SCL: %ld \n",NRF_TWIM3_NS->PSEL.SCL);
-	// printk("Value of NRF_TWIM3_NS->PSEL.SDA: %ld \n",NRF_TWIM3_NS->PSEL.SDA);
-	// printk("Value of NRF_TWIM3_NS->FREQUENCY: %ld \n",NRF_TWIM3_NS->FREQUENCY);
-	// printk("26738688 -> 100k\n");
+	/*start and configure i2c*/
+	i2c_init();
+	printk("Value of NRF_TWIM3_NS->PSEL.SCL: %ld \n",NRF_TWIM2_NS->PSEL.SCL);
+	printk("Value of NRF_TWIM3_NS->PSEL.SDA: %ld \n",NRF_TWIM2_NS->PSEL.SDA);
+	printk("Value of NRF_TWIM3_NS->FREQUENCY: %ld \n",NRF_TWIM2_NS->FREQUENCY);
+	printk("26738688 -> 100k\n");
 
-	// /*search for i2c devices*/
-	// for (u8_t i = 4; i <= 0x77; i++) {
-	// 	struct i2c_msg msgs[1];
-	// 	u8_t dst = 1;
+	/*search for i2c devices*/
+	for (u8_t i = 4; i <= 0x77; i++) {
+		struct i2c_msg msgs[1];
+		u8_t dst = 1;
 
-	// 	/* Send the address to read from */
-	// 	msgs[0].buf = &dst;
-	// 	msgs[0].len = 1U;
-	// 	msgs[0].flags = I2C_MSG_WRITE | I2C_MSG_STOP;
+		/* Send the address to read from */
+		msgs[0].buf = &dst;
+		msgs[0].len = 1U;
+		msgs[0].flags = I2C_MSG_WRITE | I2C_MSG_STOP;
 		
-	// 	error = i2c_transfer(i2c_dev, &msgs[0], 1, i);
-	// 	if (error == 0) {
-	// 		printk("0x%2x FOUND\n", i);
-	// 	}
-	// 	else {
-	// 		//printk("error %d \n", error);
-	// 	}
+		error = i2c_transfer(i2c_dev, &msgs[0], 1, i);
+		if (error == 0) {
+			printk("0x%2x FOUND\n", i);
+		}
+		else {
+			//printk("error %d \n", error);
+		}
 		
 		
-	// }
+	}
+
+	//accel init
+	accel_whoami();
+	//single_read_setup();
+	//wake_up_free_fall_setup(0x10, 0x10, 0x10);
+	uint8_t temperature_accel = read_temp();
+	printk("temp: %d C\n\r", (int)temperature_accel);
+	struct accel_data data_of_accel;
+	uint8_t reg_test = 0;
+	while(1){
+		//Start sensor with ODR 100Hz and in low-power mode 1 
+		//write_reg(LIS2DW12_CTRL1, 0x10);
+		//reg_test = read_reg(LIS2DW12_CTRL1);
+		//printf("reg_read LIS2DW12_CTRL1:  ");
+		//reg_test = read_reg(LIS2DW12_CTRL1);    
+		//printf(" %#04x\n\r", reg_test);
+
+		data_of_accel = read_accel_values();
+		printf("voja: %.6f, %.6f, %.6f\n\r", data_of_accel.x_axis, data_of_accel.y_axis, data_of_accel.z_axis);
+		printf("voja1: %#08x\n\r", reg_test);
+		k_sleep(1000); 
+	}
+
 /*****************************************************************************/
 /*****************************************************************************/
-
-/************************************TEST3************************************/
-/**********************************I2C ACCEL**********************************/
-	// if (!init_accelerometer()) {
-	// 	return -1;
-	// }
-
-	// while (1) {
-	// 	//printk("\033[1;1H");
-	// 	//printk("\033[2J");
-
-	// 	double x_accel = 0;
-	// 	double y_accel = 0;
-	// 	double z_accel = 0;
-	// 	get_accelerometer_data(&x_accel, &y_accel, &z_accel);
-
-	// 	printk("Acceleration values:\n");
-	// 	printk("------------------------------------------------------------------------------------------------------\n");
-	// 	printf("X acceleration: %lf (m/s^2), Y acceleration: %lf (m/s^2), Z acceleration: %lf (m/s^2)\n", x_accel, y_accel, z_accel);
-	// 	printk("------------------------------------------------------------------------------------------------------");
-
-	// 	k_sleep(K_MSEC(1500));
-	// }
-/*****************************************************************************/
-/*****************************************************************************/
-
-	// return 0;
-
-	/*******************************************/
-	/*	struct device *dev = device_get_binding("HTS221");*/
-
-/*	if (dev == NULL) {*/
-/*		printk("Could not get HTS221 device\n");*/
-/*		return;*/
-/*	}*/
-
-/*	if (IS_ENABLED(CONFIG_HTS221_TRIGGER)) {*/
-/*		struct sensor_trigger trig = {*/
-/*			.type = SENSOR_TRIG_DATA_READY,*/
-/*			.chan = SENSOR_CHAN_ALL,*/
-/*		};*/
-/*		if (sensor_trigger_set(dev, &trig, hts221_handler) < 0) {*/
-/*			printk("Cannot configure trigger\n");*/
-/*			return;*/
-/*		};*/
-/*	}*/
-
-/*	while (!IS_ENABLED(CONFIG_HTS221_TRIGGER)) {*/
-/*		process_sample(dev);*/
-/*		k_sleep(K_MSEC(2000));*/
-/*	}*/
-/*	k_sleep(K_FOREVER);*/
-
-	// /*blink led in loop*/
-	// while (1) {
-	// 	/* Set pin to HIGH/LOW every 1 second */
-	// 	gpio_pin_write(dev_led, LED, cnt % 2);
-	// 	cnt++;
-	// 	k_sleep(SLEEP_TIME_MS);
-	// 	printk("Hello World! %s\n", CONFIG_BOARD);
-	// }
 }
+
+/* 
+ * @brief Function checks WHO_AM_I register and checks its value.
+ *
+ * @note should be called before all other functions to check if LIS is
+ *       connected.
+ *
+ * @return true if output of read_reg is expected value 
+ */
+bool accel_whoami()
+{
+	uint8_t reg = 0;
+    // Comparing with expected value
+	reg = read_reg(LIS2DW12_WHO_AM_I);
+    if(0x44 == reg)
+    {
+		printf("I am accel %#08x\n", reg);
+        return true;
+    }
+    else
+    {
+		printk("I am NOT accel\n");
+        return false;
+    }
+}
+
+uint8_t read_temp()
+{
+    return read_reg(LIS2DW12_OUT_T);
+}
+
+/* 
+ * @brief Writes value to register over I2C 
+ * 
+ * @param reg
+ * @param val 
+ *
+ */
+void write_reg(uint8_t reg, uint8_t val)
+{
+	uint8_t temp[2];
+	temp[0] = reg;
+	temp[1] = val;
+	//i2c_reg_write_byte(i2c_dev, ACCEL_DEV_ADDR, reg, val)
+	//i2c_burst_write(i2c_dev, ACCEL_DEV_ADDR, reg, temp, 2)
+	if (i2c_reg_write_byte(i2c_dev, ACCEL_DEV_ADDR, reg, val) != 0) {
+			printk("Error on i2c_write()\n");
+        } else {
+			//printk("i2c_write: no error\r\n");
+	}
+}
+
+/* 
+ * @brief Reads value from register over I2C 
+ * 
+ * @param reg
+ *
+ * @return content of reg
+ */
+uint8_t read_reg(uint8_t reg)
+{
+	uint8_t read_data;
+	//i2c_burst_read(i2c_dev, ACCEL_DEV_ADDR, reg, &read_data, 1);
+	//i2c_reg_read_byte(i2c_dev, ACCEL_DEV_ADDR, reg, &read_data);
+	if (i2c_reg_read_byte(i2c_dev, ACCEL_DEV_ADDR, reg, &read_data) != 0) {
+		printk("Error on i2c_read()\n");
+	} else {
+		//printk("i2c_read: no error\r\n");
+	}
+    return read_data;
+}
+
+/* 
+ * @brief Setup wakeup detection 
+ *
+ */
+struct accel_data read_accel_values()
+{
+    // Demand data, after that we wait for DATA ready bit 
+    write_reg(LIS2DW12_CTRL3, 0x03);
+
+    for(int i=0;i<100;i++)
+    {
+        if(read_reg(LIS2DW12_STATUS) & LIS2DW12_DRDY_AI_BIT) 
+        {
+            // Data is ready
+            break;
+        }
+        k_sleep(10);
+    }
+
+
+    struct accel_data data;
+    uint8_t msb;
+    uint8_t lsb;
+
+    // For each axis read lower and upper register, concentate them,
+    // convert them into signed decimal notation and map them to
+    // appropriate range.
+    // By default register address should be incremented automaticaly,
+    // this is controled in CTRL2 but for some reason doesn't look like
+    // it does.
+    lsb = read_reg(LIS2DW12_OUT_X_L);  
+    msb = read_reg(LIS2DW12_OUT_X_H);  
+    data.x_axis = twos_comp_to_signed_int(((msb << 8) | lsb)); 
+
+    lsb = read_reg(LIS2DW12_OUT_Y_L);  
+    msb = read_reg(LIS2DW12_OUT_Y_H);  
+    data.y_axis = twos_comp_to_signed_int(((msb << 8) | lsb)); 
+
+    lsb = read_reg(LIS2DW12_OUT_Z_L);  
+    msb = read_reg(LIS2DW12_OUT_Z_H);  
+    data.z_axis = twos_comp_to_signed_int(((msb << 8) | lsb)); 
+
+    data.x_axis = raw_to_mg_2g_range(data.x_axis); 
+    data.y_axis = raw_to_mg_2g_range(data.y_axis); 
+    data.z_axis = raw_to_mg_2g_range(data.z_axis); 
+
+    return data;
+}
+
+/* 
+ *  @brief Convert from two's complement number into 
+ *      signed decimal number 
+ *
+ *  @param x, number to be converted
+ *
+ *  @return converted number  
+ */
+int16_t twos_comp_to_signed_int(uint16_t x)
+{
+    if( x & (0x01 << 16))
+    {
+        // Number is negative, clear MSB bit
+        x &= ~(0x01 << 16);
+        x = -x;
+        return x;
+    }
+    else
+    {
+        // Number is positive
+        return x;
+    }
+}
+
+/* 
+ * @brief Setup reading of X, Y and Z axis 
+ *
+ */
+void single_read_setup()
+{
+    // Soft-reset, reset all control registers
+    write_reg(LIS2DW12_CTRL2, 0x40);
+
+    // Enable Block data unit which prevents continus updates of 
+    // lower and upper registers. 
+    write_reg(LIS2DW12_CTRL2, 0x08);
+
+    // Set Full-scale to +/-2g
+    write_reg(LIS2DW12_CTRL6, 0x00);
+
+    // Enable single data conversion
+    write_reg(LIS2DW12_CTRL3, 0x02);
+
+    // Data-ready routed to INT1
+    // write_reg(LIS2DW12_CTRL4_INT1_PAD_CTRL, 0x01);
+
+    // Start up the sensor
+    //Set ODR 50Hz, Single data mode, 14 bit resolution 
+    write_reg(LIS2DW12_CTRL1, 0x49);
+    
+    // Settling time
+    k_sleep(20);
+    
+    //Enable interrupts
+    write_reg(LIS2DW12_CTRL7, 0x20);
+}
+
+/*
+ *  @brief Convert raw accel values to milli G's mapped to +/- 2g range
+ *
+ *  @param x
+ *
+ *  @return mapped value
+ */
+float raw_to_mg_2g_range(int16_t x)
+{
+    return (x >> 2) * 0.244; 
+}
+
+
+/* 
+ * @brief Setup wakeup and free fall detection 
+ *
+ */
+void wake_up_free_fall_setup(uint8_t wake_up_thr, uint8_t wake_up_dur,uint8_t free_fall)
+{
+	uint8_t reg_test = 0x00;
+    // Soft-reset, reset all control registers
+    write_reg(LIS2DW12_CTRL2, 0x40);
+
+    //Enable BDU
+    write_reg(LIS2DW12_CTRL2, 0x08);    
+
+    //Set full scale +- 2g 
+    write_reg(LIS2DW12_CTRL6, 0x00);    
+
+    //Enable wakeup and free fall detection interrupt
+    write_reg(LIS2DW12_CTRL4_INT1_PAD_CTRL, 0x30);    
+
+    // Programmed for 30 mm fall at 100Hz ODR
+    write_reg(LIS2DW12_FREE_FALL, free_fall);
+    write_reg(LIS2DW12_WAKE_UP_THS, wake_up_thr);    
+    write_reg(LIS2DW12_WAKE_UP_DUR, wake_up_dur);    
+
+    k_sleep(100); //Settling time
+
+    //Start sensor with ODR 100Hz and in low-power mode 1 
+    write_reg(LIS2DW12_CTRL1, 0x10);
+	printf("reg_read LIS2DW12_CTRL1:  ");
+	reg_test = read_reg(LIS2DW12_CTRL1);    
+	printf(" %#04x\n\r", reg_test);
+    //Enable interrupt function
+    write_reg(LIS2DW12_CTRL7, 0x20);    
+
+
+}
+// static int32_t platform_write(void *handle, uint8_t reg, uint8_t *bufp, uint16_t len)
+// {
+// 	int32_t ret;
+// 	ret = i2c_burst_write(handle, ACCEL_DEV_ADDR, reg, bufp, len);
+// 	if(0 != ret)
+// 	{
+// 		printk("i2c_burst_write_error");
+// 	}
+// 	return ret;
+// }
+// static int32_t platform_read(void *handle, uint8_t reg, uint8_t *bufp, uint16_t len)
+// {
+// 	int32_t ret;
+// 	printk("platform_read: i2c_burst_read");
+// 	ret = i2c_burst_read(handle, ACCEL_DEV_ADDR, reg, bufp, len);
+// 	if(0 != ret)
+// 	{
+// 		printk("i2c_burst_read_error");
+// 	}
+// 	return ret;
+// }
