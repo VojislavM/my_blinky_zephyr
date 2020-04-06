@@ -1,2 +1,3 @@
 boards/
 build/
+.vscode/settings.json
