@@ -93,10 +93,19 @@ void main(void)
 	//single_read_setup();
 	accel_wake_up_free_fall_setup(0x10, 0x10, 0x10);
 	struct accel_data data_of_accel;
+    float data_of_si7060_temp = 0;
 	uint8_t reg_test = 0;
 	while(1){
+        //accel read
 		data_of_accel = accel_read_accel_values();
 		printf("accel: %.6f, %.6f, %.6f\n\r", data_of_accel.x_axis, data_of_accel.y_axis, data_of_accel.z_axis);
+
+        //temp read
+        si7060_prepare();
+        data_of_si7060_temp = si7060_read_temp();
+        si7060_sleep();
+        printf("temperature: %.4f degC\n\r", data_of_si7060_temp);
+
 		k_sleep(1000); 
 	}
 
